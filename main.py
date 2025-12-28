@@ -340,4 +340,4 @@ if __name__ == "__main__":
             ))
             print(f"   Tagging failed; wrote sidecar -> {sidecar.name}")
 
-        input("\nPress Enter to close...")
+    input("\nPress Enter to close...")
