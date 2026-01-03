@@ -2,13 +2,13 @@
 import re
 import html
 import json
-import shutil
-import subprocess
+from mutagen.mp4 import MP4, MP4FreeForm, AtomDataType
 from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 import mimetypes
 import sys
+import os
 
 import time
 import requests
@@ -108,21 +108,24 @@ def to_iso6709(lat, lon) -> str:
         return ""
     return f"{lat:+.4f}{lon:+.4f}/"
 
-def write_video_metadata_ffmpeg(in_path: Path, out_path: Path, date_iso: str, location_text: str, lat, lon):
-    iso6709 = to_iso6709(lat, lon)
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(in_path),
-        "-map", "0", "-c", "copy",
-        "-metadata", f"creation_time={date_iso}",
-        "-metadata", f"comment=Location: {location_text} | Date: {date_iso}",
-    ]
-    if iso6709:
-        cmd += ["-metadata", f"com.apple.quicktime.location.ISO6709={iso6709}"]
-        cmd += ["-metadata", f"location={iso6709}"]
 
-    cmd += [str(out_path)]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def write_video_metadata_mutagen(path, date_iso, location_text, lat, lon):
+    iso6709 = to_iso6709(lat, lon)
+    comment = f"Location: {location_text} | Date: {date_iso}"
+
+    mp4 = MP4(path)
+    if mp4.tags is None:
+        mp4.add_tags()
+
+    mp4.tags["\xa9cmt"] = [comment]     # ©cmt
+    mp4.tags["\xa9day"] = [date_iso]    # ©day (often “year/date”)
+
+    if iso6709:
+        k = "----:com.apple.quicktime:location.ISO6709"
+        mp4.tags[k] = [MP4FreeForm(iso6709.encode("utf-8"), dataformat=AtomDataType.UTF8)]
+
+    mp4.save()
+
 
 # -------- Image metadata (EXIF for JPEG/TIFF via piexif; PNG text via Pillow) --------
 
@@ -297,11 +300,8 @@ if __name__ == "__main__":
             if is_zip(file_path, content_type):
                 save_zip(file_path, suffix)
 
-            elif kind_norm == "video" and shutil.which("ffmpeg"):
-                tagged = file_path.with_suffix(file_path.suffix.replace(".", ".tagged.", 1))
-                write_video_metadata_ffmpeg(file_path, tagged, date_iso, location_str, lat, lon)
-                file_path.unlink(missing_ok=True)
-                tagged.replace(file_path)
+            elif kind_norm == "video":
+                write_video_metadata_mutagen(file_path, date_iso, location_str, lat, lon)
                 print(f"   Saved video -> {file_path.name}")
 
 
@@ -321,15 +321,6 @@ if __name__ == "__main__":
                     ))
                     print(f"   Image type unsupported for tagging; wrote sidecar -> {sidecar.name}")
 
-            else:
-                # No ffmpeg for video, etc.
-                sidecar = file_path.with_suffix(file_path.suffix + ".json")
-                sidecar.write_text(json.dumps(
-                    {"kind": kind, "date": date_iso, "location": location_str, "lat": lat, "lon": lon, "content_type": content_type},
-                    indent=2
-                ))
-                print(f"   Tagger not available; wrote sidecar -> {sidecar.name}")
-
         except Exception as e:
             # Never lose the downloaded file; write sidecar on failure.
             print(str(e))
@@ -340,4 +331,4 @@ if __name__ == "__main__":
             ))
             print(f"   Tagging failed; wrote sidecar -> {sidecar.name}")
 
-    input("\nPress Enter to close...")
+    os.system("pause")
